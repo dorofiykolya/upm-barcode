@@ -205,7 +205,7 @@ namespace Dorofii.Barcode.Runtime
                 throw new ArgumentException($"{nameof(options.RequestHeight)} must be greater than 0");
 
             // check if the user has accepted the camera request
-            if (Application.HasUserAuthorization(UserAuthorization.WebCam))
+            if (!Application.HasUserAuthorization(UserAuthorization.WebCam))
             {
                 // request camera
                 await Application.RequestUserAuthorization(UserAuthorization.WebCam).AsTask();
