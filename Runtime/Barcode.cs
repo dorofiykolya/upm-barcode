@@ -454,6 +454,9 @@ namespace Dorofii.Barcode.Runtime
                 Material material;
                 Rect sourceRect;
 
+                Rect rawImageTransformRect = rawImage.rectTransform.rect;
+                Rect targetRect = new Rect(0, 0, rawImageTransformRect.width, rawImageTransformRect.height);
+                bool iOS = Application.platform == RuntimePlatform.IPhonePlayer;
                 int rotation = -_webCamTexture.videoRotationAngle;
 
                 if (Math.Abs(rotation) == 90 || Math.Abs(rotation) == 270)
@@ -466,9 +469,6 @@ namespace Dorofii.Barcode.Runtime
                     sourceRect = new Rect(0, 0, _webCamTexture.width, _webCamTexture.height);
                     material = _options.MaterialPreset.Default;
                 }
-
-                Rect rawImageTransformRect = rawImage.rectTransform.rect;
-                Rect targetRect = new Rect(0, 0, rawImageTransformRect.width, rawImageTransformRect.height);
 
                 float sourceAspect = sourceRect.width / sourceRect.height;
                 float targetAspect = targetRect.width / targetRect.height;
@@ -503,13 +503,13 @@ namespace Dorofii.Barcode.Runtime
                     uvOffset = new Vector2(newX, newY);
                 }
 
-                if (_webCamTexture.videoVerticallyMirrored)
+                if ((iOS && !_webCamTexture.videoVerticallyMirrored) || (!iOS && _webCamTexture.videoVerticallyMirrored))
                 {
                     uvScale.y *= -1;
                     uvOffset.y = 1 - uvOffset.y - uvScale.y;
                 }
 
-                if (Application.platform == RuntimePlatform.IPhonePlayer)
+                if (iOS)
                 {
                     uvOffset.x = 1 - uvOffset.x;
                     uvScale.x *= -1;
