@@ -5,3 +5,6 @@ Barcode decoder for Unity.
 ### Make it work
 - Add basic functionality
 - Add package.json
+
+## [0.0.2]
+### Add support for Android

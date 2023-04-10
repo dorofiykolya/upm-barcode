@@ -36,6 +36,10 @@ namespace Dorofii.Barcode.Runtime
             if (!(texture is Texture2D || texture is WebCamTexture))
                 throw new ArgumentException("Texture must be Texture2D or WebCamTexture");
 
+            // It checks if the cancellation token is default, it creates a new one with 60 seconds
+            if (cancellationToken == default)
+                cancellationToken = new CancellationTokenSource(TimeSpan.FromSeconds(60)).Token;
+
             Color32[] pixels = null;
             if (texture is Texture2D texture2D)
                 pixels = texture2D.GetPixels32();
@@ -142,6 +146,8 @@ namespace Dorofii.Barcode.Runtime
                     cancellationToken: cancellationToken
             );
 
+            cancellationToken.ThrowIfCancellationRequested();
+
             // It previews the camera texture to the RawImage
             var bindPreview = camera.Bind(rawImage);
 
@@ -152,6 +158,8 @@ namespace Dorofii.Barcode.Runtime
 
             // It disposes the camera
             camera.Dispose();
+
+            cancellationToken.ThrowIfCancellationRequested();
 
             return result;
         }
@@ -170,22 +178,31 @@ namespace Dorofii.Barcode.Runtime
         {
             // check if the camera is already created
             if (_currentWebCamera != null)
-                throw new Exception("WebCamera is already created");
+                throw new InvalidOperationException("WebCamera is already created");
 
             var options = new WebCameraOptions();
 
             // setup options
             if (option != null) option(options);
 
+            if (options.MaterialPreset == null)
+            {
+                var preset = await Resources.LoadAsync<BarcodePreviewMaterialPreset>("BarcodePreviewMaterialPreset").AsTask();
+                options.MaterialPreset = preset.asset as BarcodePreviewMaterialPreset;
+
+                if (options.MaterialPreset == null)
+                    throw new ArgumentException($"{nameof(options.MaterialPreset)} must be greater than 0");
+            }
+
             // check options
             if (options.DecodeInterval <= TimeSpan.Zero)
-                throw new ArgumentException("DecodeInterval must be greater than 0");
+                throw new ArgumentException($"{nameof(options.DecodeInterval)} must be greater than 0");
 
             if (options.RequestWidth <= 0)
-                throw new ArgumentException("RequestWidth must be greater than 0");
+                throw new ArgumentException($"{nameof(options.RequestWidth)} must be greater than 0");
 
             if (options.RequestHeight <= 0)
-                throw new ArgumentException("RequestHeight must be greater than 0");
+                throw new ArgumentException($"{nameof(options.RequestHeight)} must be greater than 0");
 
             // check if the user has accepted the camera request
             if (Application.HasUserAuthorization(UserAuthorization.WebCam))
@@ -205,6 +222,7 @@ namespace Dorofii.Barcode.Runtime
             _currentWebCamera = new WebCameraImpl(
                     options: options
                     , onDispose: () => _currentWebCamera = null
+                    , cancellationToken: cancellationToken
             ).Start();
 
             return _currentWebCamera;
@@ -221,20 +239,27 @@ namespace Dorofii.Barcode.Runtime
             private CancellationTokenSource _cancellationTokenSource;
             private EveryFrameUpdate _everyFrame;
             private bool _isFrontFacing;
+            private Color32[] _tempPixels;
 
             public WebCamTexture Texture => _webCamTexture;
 
-            public WebCameraImpl(WebCameraOptions options, Action onDispose)
+            public WebCameraImpl(
+                    WebCameraOptions options
+                    , Action onDispose
+                    , CancellationToken cancellationToken
+            )
             {
                 _bind = new List<RawImage>();
                 _tempBind = new List<RawImage>();
-                _cancellationTokenSource = new CancellationTokenSource();
+                _cancellationTokenSource = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
                 _options = options;
                 _onDispose = onDispose;
             }
 
             public IWebCamera Start()
             {
+                _cancellationTokenSource.Token.ThrowIfCancellationRequested();
+
                 _webCamTexture = new WebCamTexture(
                         deviceName: _options.DeviceName,
                         requestedWidth: _options.RequestWidth,
@@ -260,7 +285,7 @@ namespace Dorofii.Barcode.Runtime
                 GameObject.DontDestroyOnLoad(_everyFrame.gameObject);
                 _everyFrame.OnUpdate = () =>
                 {
-                    if (!_isDisposed)
+                    if (!_isDisposed && !_cancellationTokenSource.IsCancellationRequested)
                     {
                         _tempBind.Clear();
                         _tempBind.AddRange(_bind);
@@ -306,6 +331,31 @@ namespace Dorofii.Barcode.Runtime
                     throw new Exception("WebCamera is already disposed");
 
                 return ReadTexture2DFromRawImage(rawImage);
+            }
+
+            public Texture2D Snapshot()
+            {
+                if (_isDisposed)
+                    throw new Exception("WebCamera is already disposed");
+
+                // Создаем временный RenderTexture
+                RenderTexture rt = RenderTexture.GetTemporary(_webCamTexture.width, _webCamTexture.height, 0, RenderTextureFormat.Default);
+                RenderTexture.active = rt;
+
+                // Рендерим текущий WebCamTexture
+                Graphics.Blit(_webCamTexture, rt);
+
+                Texture2D outputTexture = new Texture2D(_webCamTexture.width, _webCamTexture.height, TextureFormat.RGB24, false);
+
+                // Считываем пиксели из RenderTexture в Texture2D
+                outputTexture.ReadPixels(new Rect(0, 0, _webCamTexture.width, _webCamTexture.height), 0, 0);
+                outputTexture.Apply();
+
+                // Очищаем временный RenderTexture
+                RenderTexture.active = null;
+                RenderTexture.ReleaseTemporary(rt);
+
+                return outputTexture;
             }
 
             public IDisposable Bind(RawImage rawImage)
@@ -372,8 +422,11 @@ namespace Dorofii.Barcode.Runtime
 
                 while (!_isDisposed && !internalCancellation.IsCancellationRequested)
                 {
-                    if (ReadPixelsFromRawImage(rawImage, out var pixels, out var resultWidth, out var resultHeight))
+                    var (status, pixels, resultWidth, resultHeight) = await ReadPixelsFromRawImage(rawImage, _tempPixels);
+                    internalCancellation.Token.ThrowIfCancellationRequested();
+                    if (status)
                     {
+                        _tempPixels = pixels;
                         var result = await Barcode.DecodeAsync(
                                 pixels: pixels
                                 , width: resultWidth
@@ -394,12 +447,25 @@ namespace Dorofii.Barcode.Runtime
                 throw new OperationCanceledException();
             }
 
+            // Debug.Log($"BARCODE {_webCamTexture.requestedFPS}: {_webCamTexture.width}:{_webCamTexture.height} [{Screen.width}:{Screen.height}] {_webCamTexture.videoRotationAngle} {_webCamTexture.videoVerticallyMirrored} {Screen.orientation} [{rawImage.rectTransform.rect.width}:{rawImage.rectTransform.rect}]");
+
             private void PreviewTo(RawImage rawImage)
             {
-                // it sets a texture
-                rawImage.texture = _webCamTexture;
+                Material material;
+                Rect sourceRect;
 
-                Rect sourceRect = new Rect(0, 0, _webCamTexture.width, _webCamTexture.height);
+                int rotation = -_webCamTexture.videoRotationAngle;
+
+                if (Math.Abs(rotation) == 90 || Math.Abs(rotation) == 270)
+                {
+                    sourceRect = new Rect(0, 0, _webCamTexture.height, _webCamTexture.width);
+                    material = _options.MaterialPreset.Clock90Left;
+                }
+                else
+                {
+                    sourceRect = new Rect(0, 0, _webCamTexture.width, _webCamTexture.height);
+                    material = _options.MaterialPreset.Default;
+                }
 
                 Rect rawImageTransformRect = rawImage.rectTransform.rect;
                 Rect targetRect = new Rect(0, 0, rawImageTransformRect.width, rawImageTransformRect.height);
@@ -423,12 +489,9 @@ namespace Dorofii.Barcode.Runtime
                 float newX = (1 - newWidth) * 0.5f;
                 float newY = (1 - newHeight) * 0.5f;
 
-                int rotation = -_webCamTexture.videoRotationAngle;
-
                 Vector2 uvScale;
                 Vector2 uvOffset;
 
-                // device orientation
                 if (rotation == 90 || rotation == 270)
                 {
                     uvScale = new Vector2(newHeight, newWidth);
@@ -440,14 +503,12 @@ namespace Dorofii.Barcode.Runtime
                     uvOffset = new Vector2(newX, newY);
                 }
 
-                // device vertically mirrored
                 if (_webCamTexture.videoVerticallyMirrored)
                 {
                     uvScale.y *= -1;
                     uvOffset.y = 1 - uvOffset.y - uvScale.y;
                 }
 
-                // on iOS we have to mirror the UVs horizontally
                 if (Application.platform == RuntimePlatform.IPhonePlayer)
                 {
                     uvOffset.x = 1 - uvOffset.x;
@@ -460,16 +521,17 @@ namespace Dorofii.Barcode.Runtime
                     uvScale.x *= -1;
                 }
 
-                // apply
+                rawImage.material = material;
+                rawImage.texture = _webCamTexture;
                 rawImage.uvRect = new Rect(uvOffset, uvScale);
             }
 
-            private bool ReadPixelsFromRawImage(
-                    RawImage rawImage
-                    , out Color32[] pixels
-                    , out int resultWidth
-                    , out int resultHeight
-            )
+            private async Task<(
+                    bool status
+                    , Color32[] pixels
+                    , int resultWidth
+                    , int resultHeight
+                    )> ReadPixelsFromRawImage(RawImage rawImage, Color32[] pixels)
             {
                 int sourceWidth = _webCamTexture.width;
                 int sourceHeight = _webCamTexture.height;
@@ -510,30 +572,38 @@ namespace Dorofii.Barcode.Runtime
                         || y + height > sourceHeight
                 )
                 {
-                    pixels = null;
-                    resultWidth = 0;
-                    resultHeight = 0;
-                    return false;
+                    return (status: false, pixels: null, resultWidth: 0, resultHeight: 0);
                 }
 
                 var colors = _webCamTexture.GetPixels(x, y, width, height);
                 if (colors == null)
                 {
-                    pixels = null;
-                    resultWidth = 0;
-                    resultHeight = 0;
-                    return false;
+                    return (status: false, pixels: null, resultWidth: 0, resultHeight: 0);
                 }
 
-                pixels = new Color32[colors.Length];
-                for (var i = 0; i < colors.Length; i++)
+                if (pixels == null || pixels.Length != colors.Length)
                 {
-                    pixels[i] = colors[i];
+                    pixels = new Color32[colors.Length];
                 }
-                resultWidth = width;
-                resultHeight = height;
+                if (Application.platform == RuntimePlatform.WebGLPlayer)
+                {
+                    for (var i = 0; i < colors.Length; i++)
+                    {
+                        pixels[i] = colors[i];
+                    }
+                }
+                else
+                {
+                    await Task.Run(() =>
+                    {
+                        for (var i = 0; i < colors.Length; i++)
+                        {
+                            pixels[i] = colors[i];
+                        }
+                    });
+                }
 
-                return true;
+                return (status: true, pixels: pixels, resultWidth: width, resultHeight: height);
             }
 
             private Texture2D ReadTexture2DFromRawImage(RawImage rawImage)

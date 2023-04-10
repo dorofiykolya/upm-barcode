@@ -19,6 +19,12 @@ namespace Dorofii.Barcode.Runtime
         /// <param name="rawImage"></param>
         /// <returns></returns>
         Texture2D Snapshot(RawImage rawImage);
+        
+        /// <summary>
+        /// It returns a snapshot of web camera texture
+        /// </summary>
+        /// <returns></returns>
+        Texture2D Snapshot();
 
         /// <summary>
         /// It sets texture to the RawImage and applies UVRect
