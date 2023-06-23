@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using UnityEngine;
@@ -13,6 +14,13 @@ namespace Dorofii.Barcode.Runtime
     /// </summary>
     public static class Barcode
     {
+        public enum RequestCamera
+        {
+            Any = 0,
+            FrontFacing = 1,
+            RearFacing = 2,
+        }
+
         private static IWebCamera _currentWebCamera;
 
         /// <summary>
@@ -26,11 +34,11 @@ namespace Dorofii.Barcode.Runtime
         /// <exception cref="Exception">It throws exception on cancel or other errors</exception>
         /// <returns>It returns a result of decoding</returns>
         public static Task<DecodeResult> DecodeAsync(
-                Texture texture
-                , BarcodeFormat format = BarcodeFormat.QR_CODE
-                , bool autoRotate = true
-                , bool tryInverted = true
-                , CancellationToken cancellationToken = default
+            Texture texture
+            , BarcodeFormat format = BarcodeFormat.QR_CODE
+            , bool autoRotate = true
+            , bool tryInverted = true
+            , CancellationToken cancellationToken = default
         )
         {
             if (!(texture is Texture2D || texture is WebCamTexture))
@@ -47,20 +55,22 @@ namespace Dorofii.Barcode.Runtime
                 pixels = webCamTexture.GetPixels32();
 
             return DecodeAsync(
-                    pixels: pixels
-                    , width: texture.width
-                    , height: texture.height
-                    , format: format
-                    , autoRotate: autoRotate
-                    , tryInverted: tryInverted
-                    , cancellationToken: cancellationToken
+                pixels: pixels
+                , width: texture.width
+                , height: texture.height
+                , format: format
+                , autoRotate: autoRotate
+                , tryInverted: tryInverted
+                , cancellationToken: cancellationToken
             );
         }
 
         /// <summary>
         /// Decodes barcode from texture, it work async on all platforms except WebGL
         /// </summary>
-        /// <param name="texture">Must be with read/write option</param>
+        /// <param name="pixels">Array of pixel-colors</param>
+        /// <param name="width">width of pixels</param>
+        /// <param name="height">height of pixels</param>
         /// <param name="format">Default QR CODE</param>
         /// <param name="autoRotate">Auto rotates image to decodes it</param>
         /// <param name="tryInverted">Tries to invert it</param>
@@ -68,13 +78,13 @@ namespace Dorofii.Barcode.Runtime
         /// <exception cref="Exception">It throws exception on cancel or other errors</exception>
         /// <returns>It returns a result of decoding</returns>
         public static Task<DecodeResult> DecodeAsync(
-                Color32[] pixels
-                , int width
-                , int height
-                , BarcodeFormat format = BarcodeFormat.QR_CODE
-                , bool autoRotate = true
-                , bool tryInverted = true
-                , CancellationToken cancellationToken = default
+            Color32[] pixels
+            , int width
+            , int height
+            , BarcodeFormat format = BarcodeFormat.QR_CODE
+            , bool autoRotate = true
+            , bool tryInverted = true
+            , CancellationToken cancellationToken = default
         )
         {
             var reader = new BarcodeReader
@@ -93,11 +103,11 @@ namespace Dorofii.Barcode.Runtime
             DecodeResult DecodeFromTexture()
             {
                 return new DecodeResult(
-                        decode: reader.Decode(
-                                rawColor32: pixels,
-                                width: width,
-                                height: height
-                        )
+                    decode: reader.Decode(
+                        rawColor32: pixels,
+                        width: width,
+                        height: height
+                    )
                 );
             }
 
@@ -114,17 +124,18 @@ namespace Dorofii.Barcode.Runtime
         /// <param name="format"></param>
         /// <param name="autoRotate"></param>
         /// <param name="tryInverted"></param>
+        /// <param name="requestCamera"></param>
         /// <param name="cancellationToken"></param>
-        /// <param name="updateRawImageEveryFrame"></param>
         /// <exception cref="Exception">It throws exception on cancel or other errors</exception>
         /// <returns></returns>
         public static async Task<DecodeResult> DecodeFromCameraAndPreviewAsync(
-                RawImage rawImage
-                , BarcodeFormat format = BarcodeFormat.QR_CODE
-                , bool autoRotate = true
-                , bool tryInverted = true
-                // If you want to cancel the decoding, default is 60 seconds
-                , CancellationToken cancellationToken = default
+            RawImage rawImage
+            , BarcodeFormat format = BarcodeFormat.QR_CODE
+            , bool autoRotate = true
+            , bool tryInverted = true
+            , RequestCamera requestCamera = RequestCamera.Any
+            // If you want to cancel the decoding, default is 60 seconds
+            , CancellationToken cancellationToken = default
         )
         {
             // It checks if the cancellation token is default, it creates a new one with 60 seconds
@@ -133,19 +144,24 @@ namespace Dorofii.Barcode.Runtime
 
             // It gets the current camera
             IWebCamera camera = await WebCamera(
-                    option: options =>
-                    {
-                        options.Format = format;
-                        options.AutoRotate = autoRotate;
-                        options.TryInverted = tryInverted;
+                option: options =>
+                {
+                    options.Format = format;
+                    options.AutoRotate = autoRotate;
+                    options.TryInverted = tryInverted;
+                    options.RequestCamera = requestCamera;
 
-                        var rect = rawImage.rectTransform.rect;
-                        options.RequestWidth = (int)rect.width;
-                        options.RequestHeight = (int)rect.height;
-                    },
-                    cancellationToken: cancellationToken
+                    var rect = rawImage.rectTransform.rect;
+                    options.RequestWidth = (int)rect.width;
+                    options.RequestHeight = (int)rect.height;
+                },
+                cancellationToken: cancellationToken
             );
 
+            if (cancellationToken.IsCancellationRequested)
+            {
+                camera.Dispose();
+            }
             cancellationToken.ThrowIfCancellationRequested();
 
             // It previews the camera texture to the RawImage
@@ -172,8 +188,8 @@ namespace Dorofii.Barcode.Runtime
         /// <returns></returns>
         /// <exception cref="Exception">It throws exception on cancel or other errors</exception>
         public static async Task<IWebCamera> WebCamera(
-                Action<WebCameraOptions> option = null
-                , CancellationToken cancellationToken = default
+            Action<WebCameraOptions> option = null
+            , CancellationToken cancellationToken = default
         )
         {
             // check if the camera is already created
@@ -212,6 +228,7 @@ namespace Dorofii.Barcode.Runtime
             }
 
             // throw if cancel 
+            cancellationToken.Register(OnDispose);
             cancellationToken.ThrowIfCancellationRequested();
 
             // throw if not accept
@@ -220,10 +237,15 @@ namespace Dorofii.Barcode.Runtime
 
             // creates a camera and starts it
             _currentWebCamera = new WebCameraImpl(
-                    options: options
-                    , onDispose: () => _currentWebCamera = null
-                    , cancellationToken: cancellationToken
+                options: options
+                , onDispose: OnDispose
+                , cancellationToken: cancellationToken
             ).Start();
+
+            void OnDispose()
+            {
+                _currentWebCamera = null;
+            }
 
             return _currentWebCamera;
         }
@@ -244,9 +266,9 @@ namespace Dorofii.Barcode.Runtime
             public WebCamTexture Texture => _webCamTexture;
 
             public WebCameraImpl(
-                    WebCameraOptions options
-                    , Action onDispose
-                    , CancellationToken cancellationToken
+                WebCameraOptions options
+                , Action onDispose
+                , CancellationToken cancellationToken
             )
             {
                 _bind = new List<RawImage>();
@@ -260,11 +282,40 @@ namespace Dorofii.Barcode.Runtime
             {
                 _cancellationTokenSource.Token.ThrowIfCancellationRequested();
 
+                string deviceName = _options.DeviceName;
+                if (string.IsNullOrWhiteSpace(deviceName) && _options.RequestCamera != RequestCamera.Any)
+                {
+                    List<WebCamDevice> devices = new List<WebCamDevice>();
+                    foreach (var device in WebCamTexture.devices)
+                    {
+                        if (device.isFrontFacing && _options.RequestCamera == RequestCamera.FrontFacing)
+                            devices.Add(device);
+                        else if (!device.isFrontFacing && _options.RequestCamera == RequestCamera.RearFacing)
+                            devices.Add(device);
+                    }
+                    if (devices.Count != 0)
+                    {
+                        deviceName = devices.Where(c => c.kind == WebCamKind.WideAngle).Select(x => x.name).FirstOrDefault();
+                        if (string.IsNullOrWhiteSpace(deviceName))
+                        {
+                            deviceName = devices.Where(c => c.kind == WebCamKind.UltraWideAngle).Select(x => x.name).FirstOrDefault();
+                        }
+                        if (string.IsNullOrWhiteSpace(deviceName))
+                        {
+                            deviceName = devices.Where(c => c.kind == WebCamKind.Telephoto).Select(x => x.name).FirstOrDefault();
+                        }
+                        if (string.IsNullOrWhiteSpace(deviceName))
+                        {
+                            deviceName = devices.Select(x => x.name).FirstOrDefault();
+                        }
+                    }
+                }
+
                 _webCamTexture = new WebCamTexture(
-                        deviceName: _options.DeviceName,
-                        requestedWidth: _options.RequestWidth,
-                        requestedHeight: _options.RequestHeight,
-                        requestedFPS: _options.RequestFPS
+                    deviceName: deviceName,
+                    requestedWidth: _options.RequestWidth,
+                    requestedHeight: _options.RequestHeight,
+                    requestedFPS: _options.RequestFPS
                 );
 
                 if (_webCamTexture != null)
@@ -310,6 +361,7 @@ namespace Dorofii.Barcode.Runtime
                     GameObject.Destroy(_everyFrame.gameObject);
                     _everyFrame = null;
 
+                    _onDispose.Invoke();
                     _bind.Clear();
                     _cancellationTokenSource.Cancel();
 
@@ -317,8 +369,6 @@ namespace Dorofii.Barcode.Runtime
                     {
                         var texture = _webCamTexture;
                         _webCamTexture = null;
-
-                        _onDispose.Invoke();
                         texture.Stop();
                         GameObject.Destroy(texture);
                     }
@@ -383,18 +433,18 @@ namespace Dorofii.Barcode.Runtime
                     cancellationToken = new CancellationTokenSource(TimeSpan.FromSeconds(60)).Token;
 
                 var internalCancellation = CancellationTokenSource.CreateLinkedTokenSource(
-                        _cancellationTokenSource.Token
-                        , cancellationToken
+                    _cancellationTokenSource.Token
+                    , cancellationToken
                 );
 
                 while (!_isDisposed && !internalCancellation.IsCancellationRequested)
                 {
                     var result = await Barcode.DecodeAsync(
-                            _webCamTexture
-                            , format: _options.Format
-                            , autoRotate: _options.AutoRotate
-                            , tryInverted: _options.TryInverted
-                            , cancellationToken: internalCancellation.Token
+                        _webCamTexture
+                        , format: _options.Format
+                        , autoRotate: _options.AutoRotate
+                        , tryInverted: _options.TryInverted
+                        , cancellationToken: internalCancellation.Token
                     );
 
                     if (result.Success)
@@ -416,8 +466,8 @@ namespace Dorofii.Barcode.Runtime
                     cancellationToken = new CancellationTokenSource(TimeSpan.FromSeconds(60)).Token;
 
                 var internalCancellation = CancellationTokenSource.CreateLinkedTokenSource(
-                        _cancellationTokenSource.Token
-                        , cancellationToken
+                    _cancellationTokenSource.Token
+                    , cancellationToken
                 );
 
                 while (!_isDisposed && !internalCancellation.IsCancellationRequested)
@@ -428,13 +478,13 @@ namespace Dorofii.Barcode.Runtime
                     {
                         _tempPixels = pixels;
                         var result = await Barcode.DecodeAsync(
-                                pixels: pixels
-                                , width: resultWidth
-                                , height: resultHeight
-                                , format: _options.Format
-                                , autoRotate: _options.AutoRotate
-                                , tryInverted: _options.TryInverted
-                                , cancellationToken: internalCancellation.Token
+                            pixels: pixels
+                            , width: resultWidth
+                            , height: resultHeight
+                            , format: _options.Format
+                            , autoRotate: _options.AutoRotate
+                            , tryInverted: _options.TryInverted
+                            , cancellationToken: internalCancellation.Token
                         );
 
                         if (result.Success)
@@ -446,8 +496,6 @@ namespace Dorofii.Barcode.Runtime
 
                 throw new OperationCanceledException();
             }
-
-            // Debug.Log($"BARCODE {_webCamTexture.requestedFPS}: {_webCamTexture.width}:{_webCamTexture.height} [{Screen.width}:{Screen.height}] {_webCamTexture.videoRotationAngle} {_webCamTexture.videoVerticallyMirrored} {Screen.orientation} [{rawImage.rectTransform.rect.width}:{rawImage.rectTransform.rect}]");
 
             private void PreviewTo(RawImage rawImage)
             {
@@ -527,11 +575,11 @@ namespace Dorofii.Barcode.Runtime
             }
 
             private async Task<(
-                    bool status
-                    , Color32[] pixels
-                    , int resultWidth
-                    , int resultHeight
-                    )> ReadPixelsFromRawImage(RawImage rawImage, Color32[] pixels)
+                bool status
+                , Color32[] pixels
+                , int resultWidth
+                , int resultHeight
+                )> ReadPixelsFromRawImage(RawImage rawImage, Color32[] pixels)
             {
                 int sourceWidth = _webCamTexture.width;
                 int sourceHeight = _webCamTexture.height;
@@ -560,16 +608,16 @@ namespace Dorofii.Barcode.Runtime
                 }
 
                 if (
-                        x < 0
-                        || y < 0
-                        || width <= 0
-                        || height <= 0
-                        || x >= sourceWidth
-                        || y >= sourceHeight
-                        || width > sourceWidth
-                        || height > sourceHeight
-                        || x + width > sourceWidth
-                        || y + height > sourceHeight
+                    x < 0
+                    || y < 0
+                    || width <= 0
+                    || height <= 0
+                    || x >= sourceWidth
+                    || y >= sourceHeight
+                    || width > sourceWidth
+                    || height > sourceHeight
+                    || x + width > sourceWidth
+                    || y + height > sourceHeight
                 )
                 {
                     return (status: false, pixels: null, resultWidth: 0, resultHeight: 0);

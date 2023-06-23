@@ -16,6 +16,7 @@ namespace Dorofii.Barcode.Runtime
         public int RequestFPS { get; set; } = 30;
         public TimeSpan DecodeInterval { get; set; } = TimeSpan.FromMilliseconds(500);
         public BarcodePreviewMaterialPreset MaterialPreset { get; set; }
+        public Barcode.RequestCamera RequestCamera { get; set; } = Barcode.RequestCamera.Any;
 
         public WebCameraOptions CopySizeFrom(WebCameraOptions options)
         {
